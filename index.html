@@ -465,7 +465,7 @@
       }
 
       if (countdownStep >= 3) {
-        const beatInterval = (60000 / bpm) / 2; // Every half beat / notch interval
+        const beatInterval = (60000 / bpm) / 2;
 
         for (let i = 0; i < notes.length; i++) {
           const n = notes[i];
@@ -486,9 +486,8 @@
                 n.holding = true;
                 strumState[n.dir].confirmTimer = 50;
 
-                // Award score per notch/beat interval while holding
                 if (songTime - n.lastHoldTick >= beatInterval) {
-                  score += 25; // Score per hold tick notch
+                  score += 25;
                   n.lastHoldTick = songTime;
                 }
               } else {
@@ -541,7 +540,6 @@
         }
       }
 
-      // Render Score, Misses & Accuracy Counter Display
       gCtx.fillStyle = '#ffffff';
       gCtx.font = 'bold 22px "Courier New", monospace';
       gCtx.textAlign = 'left';
@@ -550,63 +548,78 @@
       gCtx.fillText(`MISSES: ${misses}`, startX + 3.8 * spacing + 20, strumY - 10);
       gCtx.fillText(`ACC: ${accuracy.toFixed(1)}%`, startX + 3.8 * spacing + 20, strumY + 15);
 
-      // Render Sustain Tails & Notches
+      // --- ROBUST FIXED SUSTAIN HOLD TAILS (ANCHORED CORRECTLY) ---
       for (let i = 0; i < notes.length; i++) {
         const n = notes[i];
         if (n.missed && n.sustain === 0) continue;
 
         const timeDiff = n.time - songTime;
-        const yOffset = downscroll ? -(timeDiff * scrollSpeed * 0.45) : (timeDiff * scrollSpeed * 0.45);
-        const headY = strumY + yOffset;
+        const tailOffset = n.sustain * scrollSpeed * 0.45;
         const centerX = startX + n.dir * spacing;
 
-        if (n.sustain > 0) {
-          const sustainHeight = n.sustain * scrollSpeed * 0.45;
-          let tailStartY, tailEndY;
+        if (downscroll) {
+          // Downscroll: head moves downwards (increases y). Tail extends upwards from headY.
+          const headY = strumY + (timeDiff * scrollSpeed * 0.45);
+          const tailTopY = (n.hit && !n.missed) ? strumY : headY - tailOffset;
+          const tailBottomY = (n.hit && !n.missed) ? headY : headY;
 
-          if (downscroll) {
-            tailStartY = (n.hit && !n.missed) ? strumY : headY;
-            tailEndY = headY + sustainHeight;
-            if (n.hit && n.holding) {
-              tailStartY = strumY;
+          if (tailBottomY > -150 && tailTopY < gCanvas.height + 150 && tailBottomY > tailTopY) {
+            gCtx.save();
+            gCtx.fillStyle = NOTE_COLORS[n.dir];
+            gCtx.globalAlpha = n.missed ? 0.2 : 0.6;
+            const barWidth = 24;
+            gCtx.fillRect(centerX - barWidth / 2, tailTopY, barWidth, tailBottomY - tailTopY);
+
+            // Render notches
+            const beatIntervalPx = ((60000 / bpm) / 2) * scrollSpeed * 0.45;
+            gCtx.fillStyle = '#ffffff';
+            gCtx.globalAlpha = 0.8;
+            for (let py = tailTopY + beatIntervalPx; py < tailBottomY; py += beatIntervalPx) {
+              gCtx.fillRect(centerX - 8, py - 2, 16, 4);
             }
-          } else {
-            tailStartY = (n.hit && !n.missed) ? strumY : headY;
-            tailEndY = headY - sustainHeight;
-            if (n.hit && n.holding) {
-              tailStartY = strumY;
-            }
+            gCtx.restore();
           }
 
-          const topY = Math.min(tailStartY, tailEndY);
-          const height = Math.abs(tailEndY - tailStartY);
-
-          gCtx.save();
-          gCtx.fillStyle = NOTE_COLORS[n.dir];
-          gCtx.globalAlpha = n.missed ? 0.2 : 0.6;
-          const barWidth = 24;
-          gCtx.fillRect(centerX - barWidth / 2, topY, barWidth, height);
-
-          // Render notches/beats along the hold note bar
-          const beatIntervalPx = ((60000 / bpm) / 2) * scrollSpeed * 0.45;
-          gCtx.fillStyle = '#ffffff';
-          gCtx.globalAlpha = 0.8;
-          for (let py = topY + beatIntervalPx; py < topY + height; py += beatIntervalPx) {
-            gCtx.fillRect(centerX - 8, py - 2, 16, 4);
-          }
-
-          gCtx.restore();
-        }
-
-        // Render Note Head
-        if (!n.hit) {
-          if (headY > -150 && headY < gCanvas.height + 150) {
+          // Render Note Head
+          if (!n.hit && headY > -150 && headY < gCanvas.height + 150) {
             const capitalizedDir = DIRECTIONS[n.dir].charAt(0).toUpperCase() + DIRECTIONS[n.dir].slice(1);
             const usePng = !forceCanvasNotes && spriteImg.complete && spriteImg.naturalWidth > 0;
-
             if (usePng) {
-              const frameName = `static${capitalizedDir}0001`;
-              drawSpriteFrame(gCtx, frameName, centerX, headY, noteSize);
+              drawSpriteFrame(gCtx, `static${capitalizedDir}0001`, centerX, headY, noteSize);
+            } else {
+              drawCanvasArrow(gCtx, n.dir, centerX, headY, noteSize, 'confirm');
+            }
+          }
+
+        } else {
+          // Upscroll: head moves upwards (decreases y). Tail extends downwards from headY.
+          const headY = strumY - (timeDiff * scrollSpeed * 0.45);
+          const tailTopY = (n.hit && !n.missed) ? headY : headY;
+          const tailBottomY = (n.hit && !n.missed) ? strumY : headY + tailOffset;
+
+          if (tailBottomY > -150 && tailTopY < gCanvas.height + 150 && tailBottomY > tailTopY) {
+            gCtx.save();
+            gCtx.fillStyle = NOTE_COLORS[n.dir];
+            gCtx.globalAlpha = n.missed ? 0.2 : 0.6;
+            const barWidth = 24;
+            gCtx.fillRect(centerX - barWidth / 2, tailTopY, barWidth, tailBottomY - tailTopY);
+
+            // Render notches
+            const beatIntervalPx = ((60000 / bpm) / 2) * scrollSpeed * 0.45;
+            gCtx.fillStyle = '#ffffff';
+            gCtx.globalAlpha = 0.8;
+            for (let py = tailTopY + beatIntervalPx; py < tailBottomY; py += beatIntervalPx) {
+              gCtx.fillRect(centerX - 8, py - 2, 16, 4);
+            }
+            gCtx.restore();
+          }
+
+          // Render Note Head
+          if (!n.hit && headY > -150 && headY < gCanvas.height + 150) {
+            const capitalizedDir = DIRECTIONS[n.dir].charAt(0).toUpperCase() + DIRECTIONS[n.dir].slice(1);
+            const usePng = !forceCanvasNotes && spriteImg.complete && spriteImg.naturalWidth > 0;
+            if (usePng) {
+              drawSpriteFrame(gCtx, `static${capitalizedDir}0001`, centerX, headY, noteSize);
             } else {
               drawCanvasArrow(gCtx, n.dir, centerX, headY, noteSize, 'confirm');
             }
@@ -913,7 +926,7 @@
         songName: songName,
         bpm: bpm,
         scrollSpeed: scrollSpeed,
-        notes: notes.map(n => ({ time: n.time, dir: n.dir, sustain: n.sustain || 0 }))
+    notes: notes.map(n => ({ time: n.time, dir: n.dir, sustain: n.sustain || 0 }))
       };
 
       const blob = new Blob([JSON.stringify(songData, null, 2)], { type: 'application/json' });
