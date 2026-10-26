@@ -96,7 +96,7 @@
       position: relative;
     }
     .editor-sidebar {
-      width: 250px;
+      width: 260px;
       background: #111;
       border-left: 1px solid #333;
       padding: 15px;
@@ -130,6 +130,57 @@
       font-size: 13px;
       color: #fff;
       cursor: pointer;
+    }
+    
+    /* Keybind Modal */
+    #keybind-modal {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.85);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 20;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+    #keybind-modal.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .modal-box {
+      background: #1a1a1a;
+      border: 2px solid #00ffcc;
+      border-radius: 8px;
+      padding: 24px;
+      width: 320px;
+      text-align: center;
+      box-shadow: 0 0 20px rgba(0, 255, 204, 0.3);
+    }
+    .modal-title {
+      font-size: 18px;
+      font-weight: bold;
+      color: #00ffcc;
+      margin-bottom: 15px;
+    }
+    .prompt-text {
+      font-size: 14px;
+      margin-bottom: 20px;
+      color: #eee;
+    }
+    .key-status {
+      font-size: 20px;
+      font-weight: bold;
+      color: #ffff00;
+      background: #000;
+      padding: 10px;
+      border-radius: 4px;
+      border: 1px dashed #555;
+      margin-bottom: 20px;
     }
   </style>
 </head>
@@ -167,6 +218,10 @@
           <input type="number" id="input-scroll" value="2.0" step="0.1" min="0.5" max="10">
         </div>
         <div class="checkbox-group">
+          <input type="checkbox" id="check-snap" checked>
+          <label for="check-snap">Snap to Grid</label>
+        </div>
+        <div class="checkbox-group">
           <input type="checkbox" id="check-downscroll">
           <label for="check-downscroll">Downscroll</label>
         </div>
@@ -174,6 +229,11 @@
           <input type="checkbox" id="check-fallback" checked>
           <label for="check-fallback">Use Canvas Notes</label>
         </div>
+
+        <button id="btn-keybinds" style="margin-top: 10px; background: #333; border-color: #00ffcc; color: #00ffcc; font-weight: bold;">
+          Change Keybinds
+        </button>
+
         <div style="font-size: 11px; color: #777; margin-top: auto; line-height: 1.4;">
           <p>Controls:</p>
           <p>- Left Click: Place Note</p>
@@ -182,6 +242,16 @@
           <p>- Spacebar: Toggle Playback</p>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Keybind Modal -->
+  <div id="keybind-modal">
+    <div class="modal-box">
+      <div class="modal-title">REBIND CONTROLS</div>
+      <div class="prompt-text" id="bind-prompt">Press a key for LEFT ARROW...</div>
+      <div class="key-status" id="bind-status">WAITING...</div>
+      <button id="btn-cancel-bind" style="width: 100%;">Cancel</button>
     </div>
   </div>
 
@@ -250,7 +320,9 @@
     parseAtlas(XML_DATA);
 
     const DIRECTIONS = ['left', 'down', 'up', 'right'];
-    const KEY_MAP = {
+
+    // Dynamic Keybind Mapping
+    let KEY_MAP = {
       'KeyA': 0, 'ArrowLeft': 0,
       'KeyS': 1, 'ArrowDown': 1,
       'KeyW': 2, 'ArrowUp': 2,
@@ -281,7 +353,13 @@
     let isPlaying = true;
     let downscroll = false;
     let forceCanvasNotes = true;
+    let snapToGrid = true;
     let lastTimestamp = performance.now();
+
+    // Rebind Modal States
+    let isRebinding = false;
+    let rebindStep = 0; // 0: Left, 1: Down, 2: Up, 3: Right
+    let tempBindings = [null, null, null, null];
 
     // COUNTDOWN STATE SYSTEM
     let countdownStep = 0;
@@ -507,10 +585,10 @@
         let headY;
 
         if (downscroll) {
-          // Downscroll: Receptors are at bottom (strumY). Future notes (timeDiff > 0) start ABOVE at lower Y values and fall DOWNWARD.
+          // Downscroll: Notes fall DOWNWARD toward receptors at bottom
           headY = strumY - (timeDiff * scrollSpeed * 0.45);
         } else {
-          // Upscroll: Receptors are at top (strumY). Future notes (timeDiff > 0) start BELOW at higher Y values and rise UPWARD.
+          // Upscroll: Notes rise UPWARD toward receptors at top
           headY = strumY + (timeDiff * scrollSpeed * 0.45);
         }
 
@@ -648,7 +726,64 @@
     startCountdown();
     requestAnimationFrame(loop);
 
+    // Keybind Rebind Dialog System
+    function startRebindProcess() {
+      isRebinding = true;
+      rebindStep = 0;
+      tempBindings = [null, null, null, null];
+      document.getElementById('keybind-modal').classList.add('active');
+      updateRebindUI();
+    }
+
+    function updateRebindUI() {
+      const dirNames = ['LEFT ARROW', 'DOWN ARROW', 'UP ARROW', 'RIGHT ARROW'];
+      document.getElementById('bind-prompt').innerText = `Press a key for ${dirNames[rebindStep]}...`;
+      document.getElementById('bind-status').innerText = `STEP ${rebindStep + 1} OF 4`;
+    }
+
+    function cancelRebind() {
+      isRebinding = false;
+      document.getElementById('keybind-modal').classList.remove('active');
+    }
+
+    document.getElementById('btn-keybinds').addEventListener('click', () => {
+      startRebindProcess();
+    });
+
+    document.getElementById('btn-cancel-bind').addEventListener('click', () => {
+      cancelRebind();
+    });
+
     window.addEventListener('keydown', (e) => {
+      // Handle Rebind Mode Inputs
+      if (isRebinding) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (e.code === 'Escape') {
+          cancelRebind();
+          return;
+        }
+
+        tempBindings[rebindStep] = e.code;
+        rebindStep++;
+
+        if (rebindStep >= 4) {
+          // Commit new bindings
+          KEY_MAP = {};
+          for (let i = 0; i < 4; i++) {
+            if (tempBindings[i]) {
+              KEY_MAP[tempBindings[i]] = i;
+            }
+          }
+          cancelRebind();
+          alert('Keybinds updated successfully!');
+        } else {
+          updateRebindUI();
+        }
+        return;
+      }
+
       if (e.code === 'Digit7') {
         isEditorOpen = !isEditorOpen;
         const overlay = document.getElementById('editor-overlay');
@@ -718,6 +853,7 @@
     });
 
     window.addEventListener('keyup', (e) => {
+      if (isRebinding) return;
       const dir = KEY_MAP[e.code];
       if (dir !== undefined) {
         keyHeld[dir] = false;
@@ -731,22 +867,32 @@
     });
 
     eCanvas.addEventListener('mousedown', (e) => {
-      if (!isEditorOpen) return;
+      if (!isEditorOpen || isRebinding) return;
 
       const rect = eCanvas.getBoundingClientRect();
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
 
       const colWidth = 80;
+      const rowHeight = 80;
       const gridWidth = colWidth * 4;
       const startX = (eCanvas.width - gridWidth) / 2;
 
       if (mouseX >= startX && mouseX <= startX + gridWidth) {
         const dir = Math.floor((mouseX - startX) / colWidth);
-        const clickedTime = Math.round((mouseY + editorScrollY) * 10);
+        const rawTime = (mouseY + editorScrollY) * 10;
+        
+        let clickedTime = Math.round(rawTime);
+        if (snapToGrid) {
+          // Snap time to grid row cell center
+          const rowHeightTime = rowHeight * 10; // 800ms grid spacing
+          const gridRow = Math.round(rawTime / rowHeightTime);
+          clickedTime = gridRow * rowHeightTime;
+        }
 
         if (e.button === 0) {
-          const existing = notes.find(n => n.dir === dir && Math.abs(n.time - clickedTime) < 150);
+          const searchRadius = snapToGrid ? 300 : 150;
+          const existing = notes.find(n => n.dir === dir && Math.abs(n.time - clickedTime) < searchRadius);
           if (!existing) {
             notes.push({
               time: clickedTime,
@@ -757,12 +903,17 @@
             notes.sort((a, b) => a.time - b.time);
           }
         } else if (e.button === 2) {
-          notes = notes.filter(n => !(n.dir === dir && Math.abs(n.time - clickedTime) < 150));
+          const searchRadius = snapToGrid ? 300 : 150;
+          notes = notes.filter(n => !(n.dir === dir && Math.abs(n.time - clickedTime) < searchRadius));
         }
       }
     });
 
     eCanvas.addEventListener('contextmenu', e => e.preventDefault());
+
+    document.getElementById('check-snap').addEventListener('change', (e) => {
+      snapToGrid = e.target.checked;
+    });
 
     document.getElementById('check-downscroll').addEventListener('change', (e) => {
       downscroll = e.target.checked;
