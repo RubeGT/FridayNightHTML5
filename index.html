@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>FNF Engine</title>
+  <title>FNF Engine Remake</title>
   <style>
     * {
       box-sizing: border-box;
@@ -67,7 +67,7 @@
       gap: 10px;
       align-items: center;
     }
-    button, label.btn {
+    button, label.btn, select {
       background: #222;
       color: #fff;
       border: 1px solid #555;
@@ -77,7 +77,7 @@
       font-size: 13px;
       border-radius: 4px;
     }
-    button:hover, label.btn:hover {
+    button:hover, label.btn:hover, select:hover {
       background: #333;
       border-color: #00ffcc;
     }
@@ -96,7 +96,7 @@
       position: relative;
     }
     .editor-sidebar {
-      width: 220px;
+      width: 240px;
       background: #111;
       border-left: 1px solid #333;
       padding: 15px;
@@ -113,13 +113,23 @@
       font-size: 12px;
       color: #aaa;
     }
-    .control-group input {
+    .control-group input, .control-group select {
       background: #000;
       border: 1px solid #444;
       color: #fff;
       padding: 6px;
       font-family: inherit;
       border-radius: 3px;
+    }
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .checkbox-group label {
+      font-size: 13px;
+      color: #fff;
+      cursor: pointer;
     }
   </style>
 </head>
@@ -154,6 +164,14 @@
         <div class="control-group">
           <label for="input-scroll">Scroll Speed</label>
           <input type="number" id="input-scroll" value="2.0" step="0.1" min="0.5" max="10">
+        </div>
+        <div class="checkbox-group">
+          <input type="checkbox" id="check-downscroll">
+          <label for="check-downscroll">Downscroll</label>
+        </div>
+        <div class="checkbox-group">
+          <input type="checkbox" id="check-fallback" checked>
+          <label for="check-fallback">Use Canvas Notes</label>
         </div>
         <div style="font-size: 11px; color: #777; margin-top: auto;">
           <p>Controls:</p>
@@ -246,7 +264,6 @@
     }
     parseAtlas(XML_DATA);
 
-    // --- ENGINE CONSTANTS & SETUP ---
     // Strict Left (0), Down (1), Up (2), Right (3) Order
     const DIRECTIONS = ['left', 'down', 'up', 'right'];
     const KEY_MAP = {
@@ -261,7 +278,6 @@
     const eCanvas = document.getElementById('editorCanvas');
     const eCtx = eCanvas.getContext('2d');
 
-    // Automatically loads noteStrumline.png from the repository directory
     let spriteImg = new Image();
     spriteImg.src = 'noteStrumline.png';
 
@@ -271,6 +287,8 @@
     let scrollSpeed = 2.0;
     let isEditorOpen = false;
     let isPlaying = true;
+    let downscroll = false;
+    let forceCanvasNotes = true; // Toggle for canvas fallback notes vs PNG notes
     let lastTimestamp = performance.now();
 
     // Chart Notes: { time: ms, dir: 0-3 }
@@ -286,11 +304,13 @@
     ];
 
     const strumState = [
-      { anim: 'static', timer: 0 },
-      { anim: 'static', timer: 0 },
-      { anim: 'static', timer: 0 },
-      { anim: 'static', timer: 0 }
+      { pressed: false, confirmTimer: 0 },
+      { pressed: false, confirmTimer: 0 },
+      { pressed: false, confirmTimer: 0 },
+      { pressed: false, confirmTimer: 0 }
     ];
+
+    const keyHeld = [false, false, false, false];
 
     function resizeCanvases() {
       gCanvas.width = window.innerWidth;
@@ -302,17 +322,22 @@
     window.addEventListener('resize', resizeCanvases);
     resizeCanvases();
 
-    // --- RENDER HELPERS ---
+    // --- SPRITE RENDERER (BOUNDING-BOX CENTERED) ---
     function drawSpriteFrame(ctx, frameName, centerX, centerY, targetSize = 110) {
       const frame = frames[frameName];
       if (!frame) return;
 
-      const scale = targetSize / frame.frameWidth;
+      // Fit uniform target bounding size
+      const scale = targetSize / Math.max(frame.frameWidth, frame.frameHeight);
+      
       const drawWidth = frame.width * scale;
       const drawHeight = frame.height * scale;
 
-      const drawX = (centerX - (frame.frameWidth * scale) / 2) + (frame.frameX * scale);
-      const drawY = (centerY - (frame.frameHeight * scale) / 2) + (frame.frameY * scale);
+      const offsetX = (frame.frameX + frame.frameWidth / 2) * scale;
+      const offsetY = (frame.frameY + frame.frameHeight / 2) * scale;
+
+      const drawX = centerX - (frame.frameWidth * scale) / 2 + (frame.frameX * scale);
+      const drawY = centerY - (frame.frameHeight * scale) / 2 + (frame.frameY * scale);
 
       ctx.drawImage(
         spriteImg,
@@ -321,55 +346,65 @@
       );
     }
 
-    // Direct Arrow Fallbacks if image not present
-    function drawFallbackArrow(ctx, dir, centerX, centerY, size = 110, state = 'static') {
-      const colors = ['#c24b99', '#00ffff', '#0014ff', '#00ff00'];
+    // --- CANVAS VECTOR FALLBACK RENDERER (PROPER SIZES & UNIFORM CORRECTION) ---
+    function drawCanvasArrow(ctx, dir, centerX, centerY, size = 110, state = 'static') {
+      const colors = ['#c24b99', '#00ffff', '#12fa05', '#f93939'];
       ctx.save();
       ctx.translate(centerX, centerY);
 
-      // Rotation angles: Left (PI), Down (PI/2), Up (-PI/2), Right (0)
+      // Rotations: Left (PI), Down (PI/2), Up (-PI/2), Right (0)
       const angles = [Math.PI, Math.PI / 2, -Math.PI / 2, 0];
       ctx.rotate(angles[dir]);
 
-      ctx.fillStyle = state === 'press' ? '#ffffff' : colors[dir];
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = state === 'confirm' ? 5 : 3;
-
+      // Draw Arrow Body
       ctx.beginPath();
-      ctx.moveTo(-size * 0.35, -size * 0.18);
-      ctx.lineTo(0, -size * 0.18);
-      ctx.lineTo(0, -size * 0.42);
-      ctx.lineTo(size * 0.42, 0);
-      ctx.lineTo(0, size * 0.42);
-      ctx.lineTo(0, size * 0.18);
-      ctx.lineTo(-size * 0.35, size * 0.18);
+      ctx.moveTo(-size * 0.35, -size * 0.16);
+      ctx.lineTo(0, -size * 0.16);
+      ctx.lineTo(0, -size * 0.40);
+      ctx.lineTo(size * 0.40, 0);
+      ctx.lineTo(0, size * 0.40);
+      ctx.lineTo(0, size * 0.16);
+      ctx.lineTo(-size * 0.35, size * 0.16);
       ctx.closePath();
 
-      if (state === 'static') {
-        ctx.stroke();
-      } else {
+      if (state === 'confirm') {
+        ctx.fillStyle = colors[dir];
+        ctx.shadowColor = colors[dir];
+        ctx.shadowBlur = 18;
         ctx.fill();
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = '#ffffff';
+        ctx.stroke();
+      } else if (state === 'press') {
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = colors[dir];
+        ctx.stroke();
+      } else { // static receiver
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.fill();
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = colors[dir];
         ctx.stroke();
       }
+
       ctx.restore();
     }
 
-    // --- MAIN GAMEPLAY LOOP ---
+    // --- GAMEPLAY UPDATE & RENDER ---
     function updateGame(delta) {
       if (isPlaying) {
         songTime += delta;
       }
 
       for (let i = 0; i < 4; i++) {
-        if (strumState[i].timer > 0) {
-          strumState[i].timer -= delta;
-          if (strumState[i].timer <= 0) {
-            strumState[i].anim = 'static';
-          }
+        if (strumState[i].confirmTimer > 0) {
+          strumState[i].confirmTimer -= delta;
         }
       }
 
-      // Check missed notes
+      // Check for unhit missed notes
       for (let i = notes.length - 1; i >= 0; i--) {
         const n = notes[i];
         if (!n.hit && songTime - n.time > 180) {
@@ -387,32 +422,40 @@
       const spacing = 125;
       const totalWidth = spacing * 4;
       const startX = (gCanvas.width - totalWidth) / 2 + spacing / 2;
-      const strumY = 100;
+      
+      const strumY = downscroll ? gCanvas.height - 120 : 120;
 
-      // Render Strumline (Middle of Screen)
+      // Render Strumline (Middle horizontal position)
       for (let i = 0; i < 4; i++) {
         const dirName = DIRECTIONS[i];
         const capitalizedDir = dirName.charAt(0).toUpperCase() + dirName.slice(1);
         const centerX = startX + i * spacing;
 
-        const state = strumState[i].anim;
-        let frameName = `static${capitalizedDir}0001`;
-        if (state === 'press') frameName = `press${capitalizedDir}0001`;
-        if (state === 'confirm') frameName = `confirm${capitalizedDir}0001`;
+        let state = 'static';
+        if (strumState[i].confirmTimer > 0) {
+          state = 'confirm';
+        } else if (keyHeld[i]) {
+          state = 'press';
+        }
 
-        if (spriteImg.complete && spriteImg.naturalWidth > 0 && frames[frameName]) {
+        const usePng = !forceCanvasNotes && spriteImg.complete && spriteImg.naturalWidth > 0;
+
+        if (usePng) {
+          let frameName = `static${capitalizedDir}0001`;
+          if (state === 'press') frameName = `press${capitalizedDir}0001`;
+          if (state === 'confirm') frameName = `confirm${capitalizedDir}0001`;
           drawSpriteFrame(gCtx, frameName, centerX, strumY, noteSize);
         } else {
-          drawFallbackArrow(gCtx, i, centerX, strumY, noteSize, state);
+          drawCanvasArrow(gCtx, i, centerX, strumY, noteSize, state);
         }
       }
 
-      // Render Miss Counter Next to Strumline in White Text
+      // Misses counter display (White text next to strums)
       gCtx.fillStyle = '#ffffff';
-      gCtx.font = 'bold 22px "Courier New", monospace';
+      gCtx.font = 'bold 24px "Courier New", monospace';
       gCtx.textAlign = 'left';
       gCtx.textBaseline = 'middle';
-      gCtx.fillText(`MISSES: ${misses}`, startX + 4 * spacing + 10, strumY);
+      gCtx.fillText(`MISSES: ${misses}`, startX + 3.8 * spacing + 20, strumY);
 
       // Render Scrolling Notes
       for (let i = 0; i < notes.length; i++) {
@@ -420,17 +463,21 @@
         if (n.hit) continue;
 
         const timeDiff = n.time - songTime;
-        const y = strumY + (timeDiff * scrollSpeed * 0.45);
+        // Adjust direction for downscroll vs upscroll
+        const yOffset = downscroll ? -(timeDiff * scrollSpeed * 0.45) : (timeDiff * scrollSpeed * 0.45);
+        const y = strumY + yOffset;
 
         if (y > -150 && y < gCanvas.height + 150) {
           const centerX = startX + n.dir * spacing;
           const capitalizedDir = DIRECTIONS[n.dir].charAt(0).toUpperCase() + DIRECTIONS[n.dir].slice(1);
-          const frameName = `static${capitalizedDir}0001`;
 
-          if (spriteImg.complete && spriteImg.naturalWidth > 0 && frames[frameName]) {
+          const usePng = !forceCanvasNotes && spriteImg.complete && spriteImg.naturalWidth > 0;
+
+          if (usePng) {
+            const frameName = `static${capitalizedDir}0001`;
             drawSpriteFrame(gCtx, frameName, centerX, y, noteSize);
           } else {
-            drawFallbackArrow(gCtx, n.dir, centerX, y, noteSize, 'confirm');
+            drawCanvasArrow(gCtx, n.dir, centerX, y, noteSize, 'confirm');
           }
         }
       }
@@ -450,7 +497,7 @@
       const startX = (eCanvas.width - gridWidth) / 2;
       const rowHeight = 30;
 
-      // Grid Lines
+      // Draw Grid Lines
       eCtx.strokeStyle = '#222';
       eCtx.lineWidth = 1;
 
@@ -480,12 +527,13 @@
         if (noteY > -50 && noteY < eCanvas.height + 50) {
           const centerX = startX + n.dir * colWidth + colWidth / 2;
           const capitalizedDir = DIRECTIONS[n.dir].charAt(0).toUpperCase() + DIRECTIONS[n.dir].slice(1);
-          const frameName = `static${capitalizedDir}0001`;
+          const usePng = !forceCanvasNotes && spriteImg.complete && spriteImg.naturalWidth > 0;
 
-          if (spriteImg.complete && spriteImg.naturalWidth > 0 && frames[frameName]) {
-            drawSpriteFrame(eCtx, frameName, centerX, noteY, colWidth * 0.85);
+          if (usePng) {
+            const frameName = `static${capitalizedDir}0001`;
+            drawSpriteFrame(eCtx, frameName, centerX, noteY, colWidth * 0.75);
           } else {
-            drawFallbackArrow(eCtx, n.dir, centerX, noteY, colWidth * 0.85, 'confirm');
+            drawCanvasArrow(eCtx, n.dir, centerX, noteY, colWidth * 0.75, 'confirm');
           }
         }
       }
@@ -513,7 +561,7 @@
     }
     requestAnimationFrame(loop);
 
-    // --- INPUT HANDLING ---
+    // --- INPUT HANDLING (GHOST TAPPING & STAY PRESSED LOGIC) ---
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Digit7') {
         isEditorOpen = !isEditorOpen;
@@ -534,27 +582,36 @@
       }
 
       const dir = KEY_MAP[e.code];
-      if (dir !== undefined && !e.repeat) {
-        let hitNote = false;
-        for (let i = 0; i < notes.length; i++) {
-          const n = notes[i];
-          if (!n.hit && n.dir === dir) {
-            const diff = Math.abs(n.time - songTime);
-            if (diff < 140) {
-              n.hit = true;
-              hitNote = true;
-              strumState[dir].anim = 'confirm';
-              strumState[dir].timer = 150;
-              break;
+      if (dir !== undefined) {
+        keyHeld[dir] = true; // Key stays pressed while held down
+
+        if (!e.repeat) {
+          // Check for Note Hit
+          let hitNote = false;
+          for (let i = 0; i < notes.length; i++) {
+            const n = notes[i];
+            if (!n.hit && n.dir === dir) {
+              const diff = Math.abs(n.time - songTime);
+              if (diff < 150) {
+                n.hit = true;
+                hitNote = true;
+                strumState[dir].confirmTimer = 160;
+                break;
+              }
             }
           }
-        }
 
-        if (!hitNote) {
-          strumState[dir].anim = 'press';
-          strumState[dir].timer = 100;
-          misses++;
+          // GHOST TAPPING IMPLEMENTATION:
+          // Pressing key with no note present does NOT cause a miss.
+          // Misses are only incremented when an actual note passes the hit window.
         }
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      const dir = KEY_MAP[e.code];
+      if (dir !== undefined) {
+        keyHeld[dir] = false;
       }
     });
 
@@ -591,7 +648,15 @@
 
     eCanvas.addEventListener('contextmenu', e => e.preventDefault());
 
-    // --- CHART JSON CONTROLS ---
+    // --- OPTIONS & CONTROLS BINDING ---
+    document.getElementById('check-downscroll').addEventListener('change', (e) => {
+      downscroll = e.target.checked;
+    });
+
+    document.getElementById('check-fallback').addEventListener('change', (e) => {
+      forceCanvasNotes = e.target.checked;
+    });
+
     document.getElementById('json-input').addEventListener('change', (e) => {
       const file = e.target.files[0];
       if (file) {
