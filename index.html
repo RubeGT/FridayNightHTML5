@@ -290,8 +290,8 @@
 
     let misses = 0;
     let combo = 0;
-    let totalHitWeight = 0; // Sum of weight scores
-    let totalNotesAttempted = 0; // Total notes processed
+    let totalHitWeight = 0;
+    let totalNotesAttempted = 0;
     let accuracy = 100.0;
 
     let songTime = 0;
@@ -305,7 +305,7 @@
     let lastTimestamp = performance.now();
 
     // COUNTDOWN STATE SYSTEM
-    let countdownStep = 0; // 0: 3, 1: 2, 2: 1, 3: GO!, 4: Game Active
+    let countdownStep = 0;
     let countdownTimer = 0;
     const COUNTDOWN_STEP_TIME = 600;
 
@@ -332,10 +332,8 @@
       accuracy = (totalHitWeight / totalNotesAttempted) * 100;
     }
 
-    // Active Rating Popups
     let ratingPopups = [];
 
-    // Chart Notes: { time: ms, dir: 0-3, sustain: ms, hit: bool, holding: bool, missed: bool }
     let notes = [
       { time: 1000, dir: 0, sustain: 600, hit: false, holding: false, missed: false },
       { time: 2000, dir: 1, sustain: 0, hit: false, holding: false, missed: false },
@@ -362,7 +360,6 @@
     window.addEventListener('resize', resizeCanvases);
     resizeCanvases();
 
-    // RENDER HELPERS
     function drawSpriteFrame(ctx, frameName, centerX, centerY, targetSize = 110) {
       const frame = frames[frameName];
       if (!frame) return;
@@ -433,7 +430,6 @@
       });
     }
 
-    // GAMEPLAY UPDATE
     function updateGame(delta) {
       if (isEditorOpen) return;
 
@@ -441,7 +437,6 @@
         songTime += delta;
       }
 
-      // Countdown step logic
       if (countdownStep < 4) {
         countdownTimer -= delta;
         if (countdownTimer <= 0) {
@@ -456,7 +451,6 @@
         }
       }
 
-      // Rating popups logic
       for (let i = ratingPopups.length - 1; i >= 0; i--) {
         const p = ratingPopups[i];
         p.timer -= delta;
@@ -467,19 +461,20 @@
         }
       }
 
-      // Active notes & miss check post-countdown
       if (countdownStep >= 3) {
         for (let i = 0; i < notes.length; i++) {
           const n = notes[i];
           
+          // Miss when note head completely passes the receptor window without being hit
           if (!n.hit && !n.missed && songTime - n.time > 180) {
             n.missed = true;
             misses++;
             combo = 0;
-            recordRatingAccuracy(0.0); // 0% Weight for miss
+            recordRatingAccuracy(0.0);
             triggerRating('MISS', '#ff3333');
           }
 
+          // Sustain Hold Tracking
           if (n.hit && n.sustain > 0 && !n.missed) {
             const holdEndTime = n.time + n.sustain;
             if (songTime < holdEndTime) {
@@ -512,7 +507,6 @@
       const startX = (gCanvas.width - totalWidth) / 2 + spacing / 2;
       const strumY = downscroll ? gCanvas.height - 120 : 120;
 
-      // Render Strumline
       for (let i = 0; i < 4; i++) {
         const dirName = DIRECTIONS[i];
         const capitalizedDir = dirName.charAt(0).toUpperCase() + dirName.slice(1);
@@ -537,7 +531,6 @@
         }
       }
 
-      // Render Misses & Accuracy Counter Display (1 Decimal Place)
       gCtx.fillStyle = '#ffffff';
       gCtx.font = 'bold 22px "Courier New", monospace';
       gCtx.textAlign = 'left';
@@ -545,7 +538,7 @@
       gCtx.fillText(`MISSES: ${misses}`, startX + 3.8 * spacing + 20, strumY - 15);
       gCtx.fillText(`ACC: ${accuracy.toFixed(1)}%`, startX + 3.8 * spacing + 20, strumY + 15);
 
-      // Render Notes & Sustains
+      // --- CORRECTED SUSTAIN & NOTE RENDERING ORDER ---
       for (let i = 0; i < notes.length; i++) {
         const n = notes[i];
         if (n.missed && n.sustain === 0) continue;
@@ -553,30 +546,41 @@
         const timeDiff = n.time - songTime;
         const yOffset = downscroll ? -(timeDiff * scrollSpeed * 0.45) : (timeDiff * scrollSpeed * 0.45);
         const headY = strumY + yOffset;
-
         const centerX = startX + n.dir * spacing;
 
+        // 1. Render Sustain Tails First (Behind note heads)
         if (n.sustain > 0) {
           const sustainHeight = n.sustain * scrollSpeed * 0.45;
-          let tailTopY = headY;
-          let tailBottomY = downscroll ? headY + sustainHeight : headY - sustainHeight;
+          let tailStartY, tailEndY;
 
-          if (n.hit && n.holding) {
-            tailTopY = strumY;
+          if (downscroll) {
+            // In downscroll, notes flow downwards (higher y is further down)
+            tailStartY = headY;
+            tailEndY = headY + sustainHeight;
+            if (n.hit && n.holding) {
+              tailStartY = strumY;
+            }
+          } else {
+            // In upscroll, notes flow upwards (smaller y is higher up)
+            tailStartY = headY;
+            tailEndY = headY - sustainHeight;
+            if (n.hit && n.holding) {
+              tailStartY = strumY;
+            }
           }
 
-          if (Math.abs(tailTopY - strumY) < gCanvas.height) {
-            gCtx.save();
-            gCtx.fillStyle = NOTE_COLORS[n.dir];
-            gCtx.globalAlpha = n.missed ? 0.2 : 0.6;
-            const barWidth = 24;
-            const topY = Math.min(tailTopY, tailBottomY);
-            const height = Math.abs(tailBottomY - tailTopY);
-            gCtx.fillRect(centerX - barWidth / 2, topY, barWidth, height);
-            gCtx.restore();
-          }
+          const topY = Math.min(tailStartY, tailEndY);
+          const height = Math.abs(tailEndY - tailStartY);
+
+          gCtx.save();
+          gCtx.fillStyle = NOTE_COLORS[n.dir];
+          gCtx.globalAlpha = n.missed ? 0.2 : 0.6;
+          const barWidth = 24;
+          gCtx.fillRect(centerX - barWidth / 2, topY, barWidth, height);
+          gCtx.restore();
         }
 
+        // 2. Render Note Head on Top of Tails
         if (!n.hit) {
           if (headY > -150 && headY < gCanvas.height + 150) {
             const capitalizedDir = DIRECTIONS[n.dir].charAt(0).toUpperCase() + DIRECTIONS[n.dir].slice(1);
@@ -592,7 +596,6 @@
         }
       }
 
-      // Combo & Rating Text
       for (let i = 0; i < ratingPopups.length; i++) {
         const p = ratingPopups[i];
         gCtx.save();
@@ -610,7 +613,6 @@
         gCtx.restore();
       }
 
-      // COUNTDOWN OVERLAY
       if (countdownStep < 4) {
         gCtx.save();
         const countdownTexts = ["3", "2", "1", "GO!"];
@@ -642,7 +644,6 @@
       }
     }
 
-    // CHART EDITOR RENDERER
     let editorScrollY = 0;
 
     function renderEditor() {
@@ -678,7 +679,6 @@
       for (let i = 0; i < notes.length; i++) {
         const n = notes[i];
         const noteY = (n.time / 10) - editorScrollY;
-
         const centerX = startX + n.dir * colWidth + colWidth / 2;
 
         if (n.sustain > 0) {
@@ -725,7 +725,6 @@
     startCountdown();
     requestAnimationFrame(loop);
 
-    // INPUT HANDLING & ACCURACY WEIGHTS
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Digit7') {
         isEditorOpen = !isEditorOpen;
@@ -763,22 +762,22 @@
                 combo++;
 
                 if (diff <= 30) {
-                  recordRatingAccuracy(1.0); // 100%
+                  recordRatingAccuracy(1.0);
                   triggerRating('SICK!', '#00ffff');
                 } else if (diff <= 65) {
-                  recordRatingAccuracy(0.8); // 80%
+                  recordRatingAccuracy(0.8);
                   triggerRating('GOOD', '#12fa05');
                 } else if (diff <= 95) {
-                  recordRatingAccuracy(0.6); // 60%
+                  recordRatingAccuracy(0.6);
                   triggerRating('MID', '#ffff00');
                 } else if (diff <= 125) {
-                  recordRatingAccuracy(0.4); // 40%
+                  recordRatingAccuracy(0.4);
                   triggerRating('BAD', '#ff9900');
                 } else if (diff <= 145) {
-                  recordRatingAccuracy(0.2); // 20%
+                  recordRatingAccuracy(0.2);
                   triggerRating('AWFUL', '#ff5500');
                 } else {
-                  recordRatingAccuracy(0.05); // 5%
+                  recordRatingAccuracy(0.05);
                   triggerRating('SHIT', '#a64dff');
                 }
                 break;
@@ -796,7 +795,6 @@
       }
     });
 
-    // EDITOR MOUSE INTERACTION
     eCanvas.addEventListener('wheel', (e) => {
       if (!isEditorOpen) return;
       e.preventDefault();
@@ -841,7 +839,6 @@
 
     eCanvas.addEventListener('contextmenu', e => e.preventDefault());
 
-    // UI CONTROLS BINDING
     document.getElementById('input-sustain').addEventListener('change', (e) => {
       selectedSustain = parseInt(e.target.value) || 0;
     });
