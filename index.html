@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>FNF Minimal Engine</title>
+  <title>FNF Engine</title>
   <style>
     * {
       box-sizing: border-box;
@@ -31,30 +31,18 @@
       width: 100%;
       height: 100%;
     }
-    #miss-counter {
-      position: absolute;
-      top: 50%;
-      left: calc(50% + 260px);
-      transform: translateY(-50%);
-      font-size: 28px;
-      font-weight: bold;
-      color: #ff3333;
-      text-shadow: 2px 2px 4px #000;
-      pointer-events: none;
-      transition: opacity 0.3s;
-    }
     #editor-overlay {
       position: absolute;
       top: 0;
       left: 0;
       width: 100%;
       height: 100%;
-      background: rgba(0, 0, 0, 0.92);
+      background: rgba(0, 0, 0, 0.95);
       display: flex;
       flex-direction: column;
       opacity: 0;
       pointer-events: none;
-      transition: opacity 0.4s ease;
+      transition: opacity 0.3s ease;
       z-index: 10;
     }
     #editor-overlay.active {
@@ -62,7 +50,7 @@
       pointer-events: auto;
     }
     .editor-header {
-      padding: 15px 20px;
+      padding: 12px 20px;
       background: #111;
       border-bottom: 2px solid #333;
       display: flex;
@@ -70,7 +58,7 @@
       align-items: center;
     }
     .editor-title {
-      font-size: 20px;
+      font-size: 18px;
       color: #00ffcc;
       font-weight: bold;
     }
@@ -108,7 +96,7 @@
       position: relative;
     }
     .editor-sidebar {
-      width: 250px;
+      width: 220px;
       background: #111;
       border-left: 1px solid #333;
       padding: 15px;
@@ -133,38 +121,13 @@
       font-family: inherit;
       border-radius: 3px;
     }
-    #file-inputs {
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      z-index: 5;
-      display: flex;
-      gap: 10px;
-      background: rgba(0,0,0,0.6);
-      padding: 8px;
-      border-radius: 6px;
-      border: 1px solid #333;
-    }
   </style>
 </head>
 <body>
 
-  <div id="file-inputs">
-    <label class="btn">
-      Load noteStrumline.png
-      <input type="file" id="img-input" accept="image/png">
-    </label>
-    <label class="btn">
-      Load noteStrumline.xml
-      <input type="file" id="xml-input" accept=".xml">
-    </label>
-  </div>
-
   <div id="canvas-container">
     <canvas id="gameCanvas"></canvas>
   </div>
-
-  <div id="miss-counter">MISSES: 0</div>
 
   <div id="editor-overlay">
     <div class="editor-header">
@@ -284,7 +247,7 @@
     parseAtlas(XML_DATA);
 
     // --- ENGINE CONSTANTS & SETUP ---
-    // Strict Left, Down, Up, Right Order!
+    // Strict Left (0), Down (1), Up (2), Right (3) Order
     const DIRECTIONS = ['left', 'down', 'up', 'right'];
     const KEY_MAP = {
       'KeyA': 0, 'ArrowLeft': 0,
@@ -297,8 +260,8 @@
     const gCtx = gCanvas.getContext('2d');
     const eCanvas = document.getElementById('editorCanvas');
     const eCtx = eCanvas.getContext('2d');
-    const missDisplay = document.getElementById('miss-counter');
 
+    // Automatically loads noteStrumline.png from the repository directory
     let spriteImg = new Image();
     spriteImg.src = 'noteStrumline.png';
 
@@ -340,42 +303,46 @@
     resizeCanvases();
 
     // --- RENDER HELPERS ---
-    function drawSpriteFrame(ctx, frameName, targetX, targetY, scale = 0.7) {
+    function drawSpriteFrame(ctx, frameName, centerX, centerY, targetSize = 110) {
       const frame = frames[frameName];
       if (!frame) return;
 
-      const destW = frame.width * scale;
-      const destH = frame.height * scale;
-      const offsetX = frame.frameX * scale;
-      const offsetY = frame.frameY * scale;
+      const scale = targetSize / frame.frameWidth;
+      const drawWidth = frame.width * scale;
+      const drawHeight = frame.height * scale;
+
+      const drawX = (centerX - (frame.frameWidth * scale) / 2) + (frame.frameX * scale);
+      const drawY = (centerY - (frame.frameHeight * scale) / 2) + (frame.frameY * scale);
 
       ctx.drawImage(
         spriteImg,
         frame.x, frame.y, frame.width, frame.height,
-        targetX + offsetX, targetY + offsetY, destW, destH
+        drawX, drawY, drawWidth, drawHeight
       );
     }
 
     // Direct Arrow Fallbacks if image not present
-    function drawFallbackArrow(ctx, dir, x, y, size = 110, state = 'static') {
+    function drawFallbackArrow(ctx, dir, centerX, centerY, size = 110, state = 'static') {
       const colors = ['#c24b99', '#00ffff', '#0014ff', '#00ff00'];
       ctx.save();
-      ctx.translate(x + size/2, y + size/2);
-      const angles = [Math.PI, -Math.PI/2, Math.PI/2, 0];
+      ctx.translate(centerX, centerY);
+
+      // Rotation angles: Left (PI), Down (PI/2), Up (-PI/2), Right (0)
+      const angles = [Math.PI, Math.PI / 2, -Math.PI / 2, 0];
       ctx.rotate(angles[dir]);
 
       ctx.fillStyle = state === 'press' ? '#ffffff' : colors[dir];
       ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = state === 'confirm' ? 6 : 3;
+      ctx.lineWidth = state === 'confirm' ? 5 : 3;
 
       ctx.beginPath();
-      ctx.moveTo(-size*0.3, -size*0.15);
-      ctx.lineTo(0, -size*0.15);
-      ctx.lineTo(0, -size*0.4);
-      ctx.lineTo(size*0.4, 0);
-      ctx.lineTo(0, size*0.4);
-      ctx.lineTo(0, size*0.15);
-      ctx.lineTo(-size*0.3, size*0.15);
+      ctx.moveTo(-size * 0.35, -size * 0.18);
+      ctx.lineTo(0, -size * 0.18);
+      ctx.lineTo(0, -size * 0.42);
+      ctx.lineTo(size * 0.42, 0);
+      ctx.lineTo(0, size * 0.42);
+      ctx.lineTo(0, size * 0.18);
+      ctx.lineTo(-size * 0.35, size * 0.18);
       ctx.closePath();
 
       if (state === 'static') {
@@ -393,7 +360,6 @@
         songTime += delta;
       }
 
-      // Update strum animations
       for (let i = 0; i < 4; i++) {
         if (strumState[i].timer > 0) {
           strumState[i].timer -= delta;
@@ -409,7 +375,6 @@
         if (!n.hit && songTime - n.time > 180) {
           n.hit = true;
           misses++;
-          missDisplay.innerText = `MISSES: ${misses}`;
         }
       }
     }
@@ -419,16 +384,16 @@
       gCtx.fillRect(0, 0, gCanvas.width, gCanvas.height);
 
       const noteSize = 110;
-      const spacing = 120;
+      const spacing = 125;
       const totalWidth = spacing * 4;
-      const startX = (gCanvas.width - totalWidth) / 2 + (spacing - noteSize) / 2;
-      const strumY = 80;
+      const startX = (gCanvas.width - totalWidth) / 2 + spacing / 2;
+      const strumY = 100;
 
       // Render Strumline (Middle of Screen)
       for (let i = 0; i < 4; i++) {
         const dirName = DIRECTIONS[i];
         const capitalizedDir = dirName.charAt(0).toUpperCase() + dirName.slice(1);
-        const x = startX + i * spacing;
+        const centerX = startX + i * spacing;
 
         const state = strumState[i].anim;
         let frameName = `static${capitalizedDir}0001`;
@@ -436,11 +401,18 @@
         if (state === 'confirm') frameName = `confirm${capitalizedDir}0001`;
 
         if (spriteImg.complete && spriteImg.naturalWidth > 0 && frames[frameName]) {
-          drawSpriteFrame(gCtx, frameName, x - 25, strumY - 25, 0.65);
+          drawSpriteFrame(gCtx, frameName, centerX, strumY, noteSize);
         } else {
-          drawFallbackArrow(gCtx, i, x, strumY, noteSize, state);
+          drawFallbackArrow(gCtx, i, centerX, strumY, noteSize, state);
         }
       }
+
+      // Render Miss Counter Next to Strumline in White Text
+      gCtx.fillStyle = '#ffffff';
+      gCtx.font = 'bold 22px "Courier New", monospace';
+      gCtx.textAlign = 'left';
+      gCtx.textBaseline = 'middle';
+      gCtx.fillText(`MISSES: ${misses}`, startX + 4 * spacing + 10, strumY);
 
       // Render Scrolling Notes
       for (let i = 0; i < notes.length; i++) {
@@ -451,14 +423,14 @@
         const y = strumY + (timeDiff * scrollSpeed * 0.45);
 
         if (y > -150 && y < gCanvas.height + 150) {
-          const x = startX + n.dir * spacing;
+          const centerX = startX + n.dir * spacing;
           const capitalizedDir = DIRECTIONS[n.dir].charAt(0).toUpperCase() + DIRECTIONS[n.dir].slice(1);
           const frameName = `static${capitalizedDir}0001`;
 
           if (spriteImg.complete && spriteImg.naturalWidth > 0 && frames[frameName]) {
-            drawSpriteFrame(gCtx, frameName, x - 25, y - 25, 0.65);
+            drawSpriteFrame(gCtx, frameName, centerX, y, noteSize);
           } else {
-            drawFallbackArrow(gCtx, n.dir, x, y, noteSize, 'confirm');
+            drawFallbackArrow(gCtx, n.dir, centerX, y, noteSize, 'confirm');
           }
         }
       }
@@ -478,7 +450,7 @@
       const startX = (eCanvas.width - gridWidth) / 2;
       const rowHeight = 30;
 
-      // Draw Grid Lines
+      // Grid Lines
       eCtx.strokeStyle = '#222';
       eCtx.lineWidth = 1;
 
@@ -500,20 +472,20 @@
         eCtx.stroke();
       }
 
-      // Re-use gameplay notes in chart
+      // Render Notes in Grid
       for (let i = 0; i < notes.length; i++) {
         const n = notes[i];
         const noteY = (n.time / 10) - editorScrollY;
 
         if (noteY > -50 && noteY < eCanvas.height + 50) {
-          const x = startX + n.dir * colWidth + 5;
+          const centerX = startX + n.dir * colWidth + colWidth / 2;
           const capitalizedDir = DIRECTIONS[n.dir].charAt(0).toUpperCase() + DIRECTIONS[n.dir].slice(1);
           const frameName = `static${capitalizedDir}0001`;
 
           if (spriteImg.complete && spriteImg.naturalWidth > 0 && frames[frameName]) {
-            drawSpriteFrame(eCtx, frameName, x - 20, noteY - 15, 0.35);
+            drawSpriteFrame(eCtx, frameName, centerX, noteY, colWidth * 0.85);
           } else {
-            drawFallbackArrow(eCtx, n.dir, x, noteY, colWidth - 10, 'confirm');
+            drawFallbackArrow(eCtx, n.dir, centerX, noteY, colWidth * 0.85, 'confirm');
           }
         }
       }
@@ -563,7 +535,6 @@
 
       const dir = KEY_MAP[e.code];
       if (dir !== undefined && !e.repeat) {
-        // Hit Detection Logic
         let hitNote = false;
         for (let i = 0; i < notes.length; i++) {
           const n = notes[i];
@@ -583,7 +554,6 @@
           strumState[dir].anim = 'press';
           strumState[dir].timer = 100;
           misses++;
-          missDisplay.innerText = `MISSES: ${misses}`;
         }
       }
     });
@@ -621,29 +591,7 @@
 
     eCanvas.addEventListener('contextmenu', e => e.preventDefault());
 
-    // --- FILE INPUT HANDLERS ---
-    document.getElementById('img-input').addEventListener('change', (e) => {
-      const file = e.target.files[0];
-      if (file) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          spriteImg.src = event.target.result;
-        };
-        reader.readAsDataURL(file);
-      }
-    });
-
-    document.getElementById('xml-input').addEventListener('change', (e) => {
-      const file = e.target.files[0];
-      if (file) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          parseAtlas(event.target.result);
-        };
-        reader.readAsText(file);
-      }
-    });
-
+    // --- CHART JSON CONTROLS ---
     document.getElementById('json-input').addEventListener('change', (e) => {
       const file = e.target.files[0];
       if (file) {
