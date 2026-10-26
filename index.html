@@ -497,7 +497,7 @@
       gCtx.fillText(`MISSES: ${misses}`, startX + 3.8 * spacing + 20, strumY - 10);
       gCtx.fillText(`ACC: ${accuracy.toFixed(1)}%`, startX + 3.8 * spacing + 20, strumY + 15);
 
-      // --- CLEAN NOTE RENDERING (UPSCROLL = FALL DOWN, DOWNSCROLL = RISE UP) ---
+      // --- SCROLL DIRECTION LOGIC ---
       for (let i = 0; i < notes.length; i++) {
         const n = notes[i];
         if (n.hit || n.missed) continue;
@@ -507,11 +507,11 @@
         let headY;
 
         if (downscroll) {
-          // Downscroll: Notes start from the bottom (gCanvas.height) and rise UP towards strumY
-          headY = strumY + (timeDiff * scrollSpeed * 0.45);
-        } else {
-          // Upscroll: Notes start from the top (0) and fall DOWN towards strumY
+          // Downscroll: Receptors are at bottom (strumY). Future notes (timeDiff > 0) start ABOVE at lower Y values and fall DOWNWARD.
           headY = strumY - (timeDiff * scrollSpeed * 0.45);
+        } else {
+          // Upscroll: Receptors are at top (strumY). Future notes (timeDiff > 0) start BELOW at higher Y values and rise UPWARD.
+          headY = strumY + (timeDiff * scrollSpeed * 0.45);
         }
 
         if (headY > -150 && headY < gCanvas.height + 150) {
@@ -826,12 +826,11 @@
       };
       const blob = new Blob([JSON.stringify(chartData, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
-      const a = url;
       const aElem = document.createElement('a');
-      aElem.href = a;
+      aElem.href = url;
       aElem.download = 'chart.json';
       aElem.click();
-      URL.revokeObjectURL(a);
+      URL.revokeObjectURL(url);
     });
 
     document.getElementById('btn-clear').addEventListener('click', () => {
