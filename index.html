@@ -288,6 +288,7 @@
     let spriteImg = new Image();
     spriteImg.src = 'noteStrumline.png';
 
+    let score = 0;
     let misses = 0;
     let combo = 0;
     let totalHitWeight = 0;
@@ -313,6 +314,7 @@
       countdownStep = 0;
       countdownTimer = COUNTDOWN_STEP_TIME;
       songTime = -COUNTDOWN_STEP_TIME * 4;
+      score = 0;
       misses = 0;
       combo = 0;
       totalHitWeight = 0;
@@ -323,6 +325,7 @@
         n.hit = false;
         n.holding = false;
         n.missed = false;
+        n.lastHoldTick = 0;
       });
     }
 
@@ -335,10 +338,10 @@
     let ratingPopups = [];
 
     let notes = [
-      { time: 1000, dir: 0, sustain: 600, hit: false, holding: false, missed: false },
-      { time: 2000, dir: 1, sustain: 0, hit: false, holding: false, missed: false },
-      { time: 2500, dir: 2, sustain: 800, hit: false, holding: false, missed: false },
-      { time: 3500, dir: 3, sustain: 0, hit: false, holding: false, missed: false }
+      { time: 1000, dir: 0, sustain: 600, hit: false, holding: false, missed: false, lastHoldTick: 0 },
+      { time: 2000, dir: 1, sustain: 0, hit: false, holding: false, missed: false, lastHoldTick: 0 },
+      { time: 2500, dir: 2, sustain: 800, hit: false, holding: false, missed: false, lastHoldTick: 0 },
+      { time: 3500, dir: 3, sustain: 0, hit: false, holding: false, missed: false, lastHoldTick: 0 }
     ];
 
     const strumState = [
@@ -462,10 +465,11 @@
       }
 
       if (countdownStep >= 3) {
+        const beatInterval = (60000 / bpm) / 2; // Every half beat / notch interval
+
         for (let i = 0; i < notes.length; i++) {
           const n = notes[i];
           
-          // Miss when note head completely passes the receptor window without being hit
           if (!n.hit && !n.missed && songTime - n.time > 180) {
             n.missed = true;
             misses++;
@@ -474,13 +478,19 @@
             triggerRating('MISS', '#ff3333');
           }
 
-          // Sustain Hold Tracking
+          // Sustain Hold Tracking & Notch Scoring
           if (n.hit && n.sustain > 0 && !n.missed) {
             const holdEndTime = n.time + n.sustain;
             if (songTime < holdEndTime) {
               if (keyHeld[n.dir]) {
                 n.holding = true;
                 strumState[n.dir].confirmTimer = 50;
+
+                // Award score per notch/beat interval while holding
+                if (songTime - n.lastHoldTick >= beatInterval) {
+                  score += 25; // Score per hold tick notch
+                  n.lastHoldTick = songTime;
+                }
               } else {
                 n.holding = false;
                 n.missed = true;
@@ -531,14 +541,16 @@
         }
       }
 
+      // Render Score, Misses & Accuracy Counter Display
       gCtx.fillStyle = '#ffffff';
       gCtx.font = 'bold 22px "Courier New", monospace';
       gCtx.textAlign = 'left';
       gCtx.textBaseline = 'middle';
-      gCtx.fillText(`MISSES: ${misses}`, startX + 3.8 * spacing + 20, strumY - 15);
+      gCtx.fillText(`SCORE: ${score}`, startX + 3.8 * spacing + 20, strumY - 35);
+      gCtx.fillText(`MISSES: ${misses}`, startX + 3.8 * spacing + 20, strumY - 10);
       gCtx.fillText(`ACC: ${accuracy.toFixed(1)}%`, startX + 3.8 * spacing + 20, strumY + 15);
 
-      // --- CORRECTED SUSTAIN & NOTE RENDERING ORDER ---
+      // Render Sustain Tails & Notches
       for (let i = 0; i < notes.length; i++) {
         const n = notes[i];
         if (n.missed && n.sustain === 0) continue;
@@ -548,21 +560,18 @@
         const headY = strumY + yOffset;
         const centerX = startX + n.dir * spacing;
 
-        // 1. Render Sustain Tails First (Behind note heads)
         if (n.sustain > 0) {
           const sustainHeight = n.sustain * scrollSpeed * 0.45;
           let tailStartY, tailEndY;
 
           if (downscroll) {
-            // In downscroll, notes flow downwards (higher y is further down)
-            tailStartY = headY;
+            tailStartY = (n.hit && !n.missed) ? strumY : headY;
             tailEndY = headY + sustainHeight;
             if (n.hit && n.holding) {
               tailStartY = strumY;
             }
           } else {
-            // In upscroll, notes flow upwards (smaller y is higher up)
-            tailStartY = headY;
+            tailStartY = (n.hit && !n.missed) ? strumY : headY;
             tailEndY = headY - sustainHeight;
             if (n.hit && n.holding) {
               tailStartY = strumY;
@@ -577,10 +586,19 @@
           gCtx.globalAlpha = n.missed ? 0.2 : 0.6;
           const barWidth = 24;
           gCtx.fillRect(centerX - barWidth / 2, topY, barWidth, height);
+
+          // Render notches/beats along the hold note bar
+          const beatIntervalPx = ((60000 / bpm) / 2) * scrollSpeed * 0.45;
+          gCtx.fillStyle = '#ffffff';
+          gCtx.globalAlpha = 0.8;
+          for (let py = topY + beatIntervalPx; py < topY + height; py += beatIntervalPx) {
+            gCtx.fillRect(centerX - 8, py - 2, 16, 4);
+          }
+
           gCtx.restore();
         }
 
-        // 2. Render Note Head on Top of Tails
+        // Render Note Head
         if (!n.hit) {
           if (headY > -150 && headY < gCanvas.height + 150) {
             const capitalizedDir = DIRECTIONS[n.dir].charAt(0).toUpperCase() + DIRECTIONS[n.dir].slice(1);
@@ -762,21 +780,27 @@
                 combo++;
 
                 if (diff <= 30) {
+                  score += 350;
                   recordRatingAccuracy(1.0);
                   triggerRating('SICK!', '#00ffff');
                 } else if (diff <= 65) {
+                  score += 200;
                   recordRatingAccuracy(0.8);
                   triggerRating('GOOD', '#12fa05');
                 } else if (diff <= 95) {
+                  score += 100;
                   recordRatingAccuracy(0.6);
                   triggerRating('MID', '#ffff00');
                 } else if (diff <= 125) {
+                  score += 50;
                   recordRatingAccuracy(0.4);
                   triggerRating('BAD', '#ff9900');
                 } else if (diff <= 145) {
+                  score += 25;
                   recordRatingAccuracy(0.2);
                   triggerRating('AWFUL', '#ff5500');
                 } else {
+                  score += 10;
                   recordRatingAccuracy(0.05);
                   triggerRating('SHIT', '#a64dff');
                 }
@@ -827,7 +851,8 @@
               sustain: selectedSustain,
               hit: false,
               holding: false,
-              missed: false
+              missed: false,
+              lastHoldTick: 0
             });
             notes.sort((a, b) => a.time - b.time);
           }
@@ -866,7 +891,8 @@
               sustain: n.sustain || 0,
               hit: false,
               holding: false,
-              missed: false
+              missed: false,
+              lastHoldTick: 0
             }));
             document.getElementById('input-bpm').value = bpm;
             document.getElementById('input-scroll').value = scrollSpeed;
